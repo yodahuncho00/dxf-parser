@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+*$py.class
+pipe_bom_export.csv
+pipe_bom_export.xlsx
