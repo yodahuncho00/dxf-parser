@@ -1,5 +1,6 @@
 from pathlib import Path
 import csv
+from datetime import datetime
 import logging
 import re
 from typing import Iterator, List, Any
@@ -31,6 +32,80 @@ SCHEDULE_PATTERN = re.compile(r"\s*-?\s*Sch\.\s*([^\s,;]+)", re.IGNORECASE)
 SCHEDULE_ONLY_PATTERN = re.compile(r"^\s*Sch\.\s*(.+?)\s*$", re.IGNORECASE)
 QUANTITY_METERS_PATTERN = re.compile(r"\s*M\s*$", re.IGNORECASE)
 MATERIAL_PATTERN = re.compile(r"\b(A\d{2,4})\b", re.IGNORECASE)
+DATE_REGEX = re.compile(r"^\d{2}[./-]\d{2}[./-]\d{4}$|^\d{4}[./-]\d{2}[./-]\d{2}$")
+DATE_FORMATS = [
+    "%d.%m.%Y",
+    "%d/%m/%Y",
+    "%d-%m-%Y",
+    "%Y-%m-%d",
+    "%Y.%m.%d",
+]
+STATUS_KEYWORDS = {
+    "ISSUED",
+    "IFC",
+    "IFD",
+    "IFA",
+    "IFR",
+    "CONSTRUCTION",
+    "DESIGN",
+    "REVIEW",
+    "APPROVAL",
+    "BID",
+    "TENDER",
+    "HAZOP",
+    "COMMENT",
+    "FEED",
+    "AS-BUILT",
+    "RECORD",
+    "PRELIMINARY",
+}
+
+
+def parse_date(text: str) -> datetime | None:
+    """Attempt to parse date string into a datetime object."""
+    if not DATE_REGEX.match(text):
+        return None
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def extract_latest_revision_record(all_text_entities: List[tuple[str, str]]) -> tuple[str, str]:
+    """Scan all modelspace TEXT entities for revision records and return (date, reason_for_issue)
+    corresponding to the latest date.
+    """
+    candidates: list[tuple[datetime, str, str]] = []
+
+    for i, (text, _) in enumerate(all_text_entities):
+        t = text.strip()
+        dt = parse_date(t)
+        if dt is not None:
+            # Look for status in nearby entities (forward first, then backward)
+            status_val = ""
+            for j in range(i + 1, min(i + 7, len(all_text_entities))):
+                nt = all_text_entities[j][0].strip()
+                if any(kw in nt.upper() for kw in STATUS_KEYWORDS):
+                    status_val = nt
+                    break
+            if not status_val:
+                for j in range(i - 1, max(-1, i - 6), -1):
+                    nt = all_text_entities[j][0].strip()
+                    if any(kw in nt.upper() for kw in STATUS_KEYWORDS):
+                        status_val = nt
+                        break
+
+            candidates.append((dt, t, status_val))
+
+    if not candidates:
+        return "", ""
+
+    # Sort by date ascending, prioritizing candidates with a non-empty status in case of same date
+    candidates.sort(key=lambda c: (c[0], bool(c[2])))
+    latest = candidates[-1]
+    return latest[1], latest[2]
 
 
 def extract_rev(dwg_name: str) -> str:
@@ -194,21 +269,8 @@ def extract_pipe_rows(dxf_path: Path) -> Iterator[List[str]]:
             logging.warning("Skipping invalid DXF %s: %s", dxf_path.name, exc)
             return
 
-    # Extract date and status from all TEXT entities in modelspace
-    date_val, status_val = "", ""
-    date_pattern = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
-    status_keywords = {"ISSUED", "IFC", "CONSTRUCTION"}
-
-    for i, (text, _) in enumerate(all_text_entities):
-        t = text.strip()
-        if date_pattern.match(t):
-            date_val = t
-            for j in range(i + 1, min(i + 5, len(all_text_entities))):
-                nt = all_text_entities[j][0].strip()
-                if any(kw in nt.upper() for kw in status_keywords):
-                    status_val = nt
-                    break
-            break
+    # Extract date and reason for issue from the latest revision record
+    date_val, status_val = extract_latest_revision_record(all_text_entities)
 
     # Extract GT_1 TEXT values for the pipe BOM parser
     values = [
