@@ -1,0 +1,72 @@
+  0
+TEXT
+  5
+21BB
+330
+6F
+100
+AcDbEntity
+  8
+0
+  6
+Continuous
+100
+AcDbText
+ 10
+277.5357142857143
+ 20
+13.25
+ 30
+0.0
+ 40
+2.5
+  1
+02.07.2026
+  7
+htx3
+ 72
+     4
+ 11
+284.5
+ 21
+14.5
+ 31
+0.0
+100
+AcDbText
+  0
+TEXT
+  5
+21BC
+330
+6F
+100
+AcDbEntity
+  8
+0
+  6
+Continuous
+100
+AcDbText
+ 10
+301.0714285714286
+ 20
+13.25089285714285
+ 30
+0.0
+ 40
+2.5
+  1
+IFC-ISSUED FOR CONSTRUCTION
+  7
+htx3
+ 72
+     4
+ 11
+320.0
+ 21
+14.5
+ 31
+0.0
+100
+AcDbText
