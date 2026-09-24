@@ -15,7 +15,7 @@ INPUT_LAYER = "GT_1"
 OUTPUT_FILE = "pipe_bom_export.csv"
 MTO_DIR = "MTO"
 MTO_EXCEL_FILE = "MTO_Pipes_AG.xlsx"
-PIPE_PREFIX = "PIPE B36.10"
+PIPE_PREFIX = "PIPE "
 CSV_HEADERS = [
     "Drawing Number",
     "Rev.",
@@ -48,7 +48,7 @@ EXCEL_HEADERS = [
 SCHEDULE_PATTERN = re.compile(r"\s*-?\s*Sch\.\s*([^\s,;]+)", re.IGNORECASE)
 SCHEDULE_ONLY_PATTERN = re.compile(r"^\s*Sch\.\s*(.+?)\s*$", re.IGNORECASE)
 QUANTITY_METERS_PATTERN = re.compile(r"\s*M\s*$", re.IGNORECASE)
-MATERIAL_PATTERN = re.compile(r"\b(A\d{2,4})\b", re.IGNORECASE)
+MATERIAL_PATTERN = re.compile(r"\b(A\d{2,4}|PE\d+|HDPE|PVC|API\s*5L\w*|SS\d{3}|CS)\b", re.IGNORECASE)
 DATE_REGEX = re.compile(r"^\d{2}[./-]\d{2}[./-]\d{4}$|^\d{4}[./-]\d{2}[./-]\d{2}$")
 DATE_FORMATS = [
     "%d.%m.%Y",
@@ -307,7 +307,8 @@ def extract_pipe_rows(dxf_path: Path) -> Iterator[List[str]]:
 
     index = 0
     while index < len(values):
-        if values[index].upper().startswith(PIPE_PREFIX):
+        val_upper = values[index].upper().strip()
+        if val_upper.startswith(PIPE_PREFIX) and not val_upper.startswith("PIPE SUPPORT"):
             if index + 3 >= len(values):
                 logging.warning(
                     "Incomplete pipe record in %s after TEXT value %r",
