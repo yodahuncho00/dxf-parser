@@ -3,3 +3,6 @@ __pycache__/
 *$py.class
 pipe_bom_export.csv
 pipe_bom_export.xlsx
+*.dxf
+
+
