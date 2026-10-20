@@ -3,7 +3,7 @@ from datetime import datetime
 import logging
 from pathlib import Path
 import re
-from typing import Any, Iterator, List
+from typing import Any, Iterator, List, NamedTuple
 
 import ezdxf
 from ezdxf.lldxf.const import DXFStructureError
@@ -45,9 +45,17 @@ EXCEL_HEADERS = [
     "Revision Status",
 ]
 
-SCHEDULE_PATTERN = re.compile(r"\s*-?\s*Sch\.\s*([^\s,;]+)", re.IGNORECASE)
-SCHEDULE_ONLY_PATTERN = re.compile(r"^\s*Sch\.\s*(.+?)\s*$", re.IGNORECASE)
-QUANTITY_METERS_PATTERN = re.compile(r"\s*M\s*$", re.IGNORECASE)
+
+class TextEntity(NamedTuple):
+    text: str
+    layer: str
+    x: float = 0.0
+    y: float = 0.0
+
+
+SCHEDULE_PATTERN = re.compile(r"\s*-?\s*Sch(?:\.|edule)?\s*([^\s,;]+)", re.IGNORECASE)
+SCHEDULE_ONLY_PATTERN = re.compile(r"^\s*Sch(?:\.|edule)?\s*(.+?)\s*$", re.IGNORECASE)
+QUANTITY_METERS_PATTERN = re.compile(r"\s*M(?:TR|ETRES|ETERS)?\s*$", re.IGNORECASE)
 MATERIAL_PATTERN = re.compile(r"\b(A\d{2,4}|PE\d+|HDPE|PVC|API\s*5L\w*|SS\d{3}|CS)\b", re.IGNORECASE)
 DATE_REGEX = re.compile(r"^\d{2}[./-]\d{2}[./-]\d{4}$|^\d{4}[./-]\d{2}[./-]\d{2}$")
 DATE_FORMATS = [
@@ -77,6 +85,56 @@ STATUS_KEYWORDS = {
     "PRELIMINARY",
 }
 
+DIAMETER_PATTERN = re.compile(
+    r"^\s*(?:DN\s*)?(\d+(?:[.,]\d+)?|\d+/\d+|\d+[\s.-]+\d+/\d+)(?:\"|''|MM|NPS|DN)?\s*$",
+    re.IGNORECASE,
+)
+MATERIAL_CODE_PATTERN = re.compile(
+    r"^(?:I\d{6,10}|[A-Z][A-Z0-9_-]{5,14}|\d{7,12})$", re.IGNORECASE
+)
+QUANTITY_PATTERN = re.compile(
+    r"^\s*(\d+(?:[.,]\d+)?)\s*(?:M(?:TR|ETRES|ETERS)?)?\s*$", re.IGNORECASE
+)
+SECTION_HEADERS = {
+    "PIPES", "PIPE", "FLANGES", "FLANGE", "VALVES", "VALVE",
+    "FITTINGS", "FITTING", "GASKETS", "GASKET", "BOLTS", "BOLT",
+    "INSTRUMENTS", "INSTRUMENT", "SUPPORTS", "SUPPORT", "PIPE SUPPORTS",
+    "SPECIAL PARTS", "MISCELLANEOUS", "O-LETS", "BRANCH",
+}
+
+
+def is_diameter(text: str) -> bool:
+    """Return True if text resembles a pipe size / diameter."""
+    t = text.strip()
+    if t.upper() in SECTION_HEADERS:
+        return False
+    return bool(DIAMETER_PATTERN.match(t))
+
+
+def is_material_code(text: str) -> bool:
+    """Return True if text resembles an alphanumeric item/material code."""
+    t = text.strip()
+    if t.upper() in SECTION_HEADERS:
+        return False
+    return bool(MATERIAL_CODE_PATTERN.match(t))
+
+
+def is_quantity(text: str) -> bool:
+    """Return True if text resembles a quantity value."""
+    t = text.strip()
+    if t.upper() in SECTION_HEADERS:
+        return False
+    return bool(QUANTITY_PATTERN.match(t))
+
+
+def is_tail_columns(diam_text: str, mat_code_text: str, qty_text: str) -> bool:
+    """Check whether a 3-tuple matches the (diameter, material_code, quantity) column signature."""
+    return (
+        is_diameter(diam_text)
+        and is_material_code(mat_code_text)
+        and is_quantity(qty_text)
+    )
+
 
 def parse_date(text: str) -> datetime | None:
     """Attempt to parse date string into a datetime object."""
@@ -90,26 +148,26 @@ def parse_date(text: str) -> datetime | None:
     return None
 
 
-def extract_latest_revision_record(all_text_entities: List[tuple[str, str]]) -> tuple[str, str]:
+def extract_latest_revision_record(all_text_entities: List[TextEntity]) -> tuple[str, str]:
     """Scan all modelspace TEXT entities for revision records and return (date, reason_for_issue)
     corresponding to the latest date.
     """
     candidates: list[tuple[datetime, str, str]] = []
 
-    for i, (text, _) in enumerate(all_text_entities):
-        t = text.strip()
+    for i, entity in enumerate(all_text_entities):
+        t = entity.text.strip()
         dt = parse_date(t)
         if dt is not None:
             # Look for status in nearby entities (forward first, then backward)
             status_val = ""
             for j in range(i + 1, min(i + 7, len(all_text_entities))):
-                nt = all_text_entities[j][0].strip()
+                nt = all_text_entities[j].text.strip()
                 if any(kw in nt.upper() for kw in STATUS_KEYWORDS):
                     status_val = nt
                     break
             if not status_val:
                 for j in range(i - 1, max(-1, i - 6), -1):
-                    nt = all_text_entities[j][0].strip()
+                    nt = all_text_entities[j].text.strip()
                     if any(kw in nt.upper() for kw in STATUS_KEYWORDS):
                         status_val = nt
                         break
@@ -158,12 +216,13 @@ def split_schedule(description: str) -> tuple[str, str]:
     """Return a description without its schedule and the schedule without 'Sch.'."""
     match = SCHEDULE_PATTERN.search(description)
     if not match:
-        return description, ""
+        return description.strip(), ""
 
-    schedule = match.group(1)
+    schedule = match.group(1).strip()
     description_without_schedule = (
         description[: match.start()] + description[match.end() :]
     ).strip(" -")
+    description_without_schedule = re.sub(r"\s+", " ", description_without_schedule).strip()
     return description_without_schedule, schedule
 
 
@@ -184,16 +243,18 @@ def extract_material(description: str) -> str:
     return match.group(1).upper() if match else ""
 
 
-def extract_modelspace_text_entities(filepath: Path) -> List[tuple[str, str]]:
+def extract_modelspace_text_entities(filepath: Path) -> List[TextEntity]:
     """Fast, low-level line-by-line parsing of ASCII DXF file to extract TEXT entities in Model Space.
-    Returns a list of (text_value, layer_name) tuples.
+    Returns a list of TextEntity(text, layer, x, y) objects.
     """
-    text_entities = []
+    text_entities: List[TextEntity] = []
     in_entities_section = False
 
     current_entity_type = None
     current_text = ""
     current_layer = ""
+    current_x = 0.0
+    current_y = 0.0
     is_paperspace = False
     in_model_layout = True
 
@@ -229,12 +290,16 @@ def extract_modelspace_text_entities(filepath: Path) -> List[tuple[str, str]]:
             # Save the completed TEXT entity if we were building one
             if in_entities_section and current_entity_type == "TEXT":
                 if not is_paperspace and in_model_layout:
-                    text_entities.append((current_text.strip(), current_layer))
+                    text_entities.append(
+                        TextEntity(current_text.strip(), current_layer, current_x, current_y)
+                    )
 
             # Reset entity fields for the next entity
             current_entity_type = None
             current_text = ""
             current_layer = ""
+            current_x = 0.0
+            current_y = 0.0
             is_paperspace = False
             in_model_layout = True
 
@@ -259,6 +324,16 @@ def extract_modelspace_text_entities(filepath: Path) -> List[tuple[str, str]]:
                     current_text = val
                 elif code == 8:
                     current_layer = val
+                elif code == 10:
+                    try:
+                        current_x = float(val)
+                    except ValueError:
+                        pass
+                elif code == 20:
+                    try:
+                        current_y = float(val)
+                    except ValueError:
+                        pass
                 elif code == 67:
                     is_paperspace = val == "1"
                 elif code == 410:
@@ -269,7 +344,7 @@ def extract_modelspace_text_entities(filepath: Path) -> List[tuple[str, str]]:
 
 def extract_pipe_rows(dxf_path: Path) -> Iterator[List[str]]:
     """Extract pipe rows along with revision Date and Status from the DXF file."""
-    all_text_entities = []
+    all_text_entities: List[TextEntity] = []
     use_fallback = False
     try:
         all_text_entities = extract_modelspace_text_entities(dxf_path)
@@ -285,7 +360,12 @@ def extract_pipe_rows(dxf_path: Path) -> Iterator[List[str]]:
         try:
             document = ezdxf.readfile(dxf_path)
             all_text_entities = [
-                (entity.dxf.text, entity.dxf.layer)
+                TextEntity(
+                    entity.dxf.text,
+                    entity.dxf.layer,
+                    getattr(entity.dxf.insert, "x", 0.0),
+                    getattr(entity.dxf.insert, "y", 0.0),
+                )
                 for entity in document.modelspace()
                 if entity.dxftype() == "TEXT"
             ]
@@ -296,9 +376,9 @@ def extract_pipe_rows(dxf_path: Path) -> Iterator[List[str]]:
     # Extract date and reason for issue from the latest revision record
     date_val, status_val = extract_latest_revision_record(all_text_entities)
 
-    # Extract GT_1 TEXT values for the pipe BOM parser
-    values = [
-        text.strip() for text, layer in all_text_entities if layer == INPUT_LAYER
+    # Filter GT_1 TEXT entities for the pipe BOM parser
+    gt1_entities = [
+        e for e in all_text_entities if e.layer == INPUT_LAYER and e.text.strip()
     ]
 
     dwg_name = clean_dwg_name(dxf_path.stem)
@@ -306,51 +386,76 @@ def extract_pipe_rows(dxf_path: Path) -> Iterator[List[str]]:
     area_val = extract_area(dwg_name)
 
     index = 0
-    while index < len(values):
-        val_upper = values[index].upper().strip()
+    while index < len(gt1_entities):
+        e = gt1_entities[index]
+        val_upper = e.text.upper().strip()
         if val_upper.startswith(PIPE_PREFIX) and not val_upper.startswith("PIPE SUPPORT"):
-            if index + 3 >= len(values):
+            matched = False
+            # Pipe descriptions can span 1, 2, or more entities (offset k).
+            # Look ahead for the remaining 3 columns: (diameter, material_code, quantity).
+            for k in range(1, 5):
+                if index + k + 2 >= len(gt1_entities):
+                    break
+
+                cand_diam = gt1_entities[index + k]
+                cand_mat = gt1_entities[index + k + 1]
+                cand_qty = gt1_entities[index + k + 2]
+
+                cand_diam_upper = cand_diam.text.strip().upper()
+                if cand_diam_upper in SECTION_HEADERS or (
+                    cand_diam_upper.startswith(PIPE_PREFIX)
+                    and not cand_diam_upper.startswith("PIPE SUPPORT")
+                ):
+                    break
+
+                coords_match = False
+                if e.x > 0 and cand_diam.x > 0:
+                    if (
+                        cand_diam.x > e.x + 20.0
+                        and cand_mat.x > cand_diam.x + 5.0
+                        and cand_qty.x > cand_mat.x + 5.0
+                    ):
+                        coords_match = True
+
+                content_match = is_tail_columns(
+                    cand_diam.text, cand_mat.text, cand_qty.text
+                )
+
+                if (
+                    coords_match
+                    and (content_match or is_diameter(cand_diam.text))
+                ) or content_match:
+                    desc_entities = gt1_entities[index : index + k]
+                    full_desc = " ".join(ent.text.strip() for ent in desc_entities)
+                    clean_desc, schedule = split_schedule(full_desc)
+                    diameter = cand_diam.text.strip()
+                    material_code = cand_mat.text.strip()
+                    quantity = normalize_quantity(cand_qty.text.strip())
+
+                    yield [
+                        dwg_name,
+                        rev_val,
+                        date_val,
+                        status_val,
+                        area_val,
+                        clean_desc,
+                        extract_material(clean_desc),
+                        diameter,
+                        schedule,
+                        material_code,
+                        quantity,
+                    ]
+                    index += k + 3
+                    matched = True
+                    break
+
+            if not matched:
                 logging.warning(
-                    "Incomplete pipe record in %s after TEXT value %r",
+                    "Incomplete or unrecognized pipe record in %s after TEXT value %r",
                     dxf_path.name,
-                    values[index],
+                    e.text,
                 )
                 index += 1
-                continue
-
-            description = values[index]
-            standalone_schedule = schedule_value(values[index + 1])
-
-            if standalone_schedule is not None:
-                if index + 4 >= len(values):
-                    logging.warning(
-                        "Incomplete pipe record in %s after TEXT value %r",
-                        dxf_path.name,
-                        description,
-                    )
-                    index += 1
-                    continue
-                schedule = standalone_schedule
-                diameter, material_code, quantity = values[index + 2 : index + 5]
-                index += 5
-            else:
-                description, schedule = split_schedule(description)
-                diameter, material_code, quantity = values[index + 1 : index + 4]
-                index += 4
-
-            yield [
-                dwg_name,
-                rev_val,
-                date_val,
-                status_val,
-                area_val,
-                description,
-                extract_material(description),
-                diameter,
-                schedule,
-                material_code,
-                normalize_quantity(quantity),
-            ]
         else:
             index += 1
 
