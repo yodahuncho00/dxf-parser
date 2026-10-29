@@ -14,6 +14,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 INPUT_LAYER = "GT_1"
 OUTPUT_FILE = "pipe_bom_export.csv"
 FITTINGS_OUTPUT_FILE = "fitting_bom_export.csv"
+FLANGES_OUTPUT_FILE = "flange_bom_export.csv"
 MTO_DIR = "MTO"
 MTO_EXCEL_FILE = "MTO_Pipes_AG.xlsx"
 PIPE_PREFIX = "PIPE "
@@ -469,8 +470,10 @@ def extract_pipe_rows(dxf_path: Path) -> Iterator[List[str]]:
             index += 1
 
 
-def extract_fitting_rows(dxf_path: Path) -> Iterator[List[str]]:
-    """Extract only item rows positioned under a FITTINGS section heading."""
+def extract_section_rows(
+    dxf_path: Path, section_headers: set[str]
+) -> Iterator[List[str]]:
+    """Extract item rows positioned under one of the requested BOM section headings."""
     all_text_entities: List[TextEntity] = []
     use_fallback = False
     try:
@@ -509,25 +512,25 @@ def extract_fitting_rows(dxf_path: Path) -> Iterator[List[str]]:
     rev_val = extract_rev(dwg_name)
     area_val = extract_area(dwg_name)
 
-    in_fittings_section = False
+    in_target_section = False
     index = 0
     while index < len(gt1_entities):
         current = gt1_entities[index].text.strip()
         current_upper = current.upper()
 
-        if current_upper in {"FITTINGS", "FITTING"}:
-            in_fittings_section = True
+        if current_upper in section_headers:
+            in_target_section = True
             index += 1
             continue
 
-        if in_fittings_section and current_upper in SECTION_HEADERS:
-            in_fittings_section = False
+        if in_target_section and current_upper in SECTION_HEADERS:
+            in_target_section = False
             index += 1
             continue
 
-        # A fitting table row is: item number, description, diameter, material code, qty.
-        # The item number anchors parsing so no text outside the FITTINGS block is collected.
-        if in_fittings_section and re.fullmatch(r"\d+\.?", current):
+        # A BOM row is: item number, description, diameter, material code, qty.
+        # The item number anchors parsing so no text outside the target section is collected.
+        if in_target_section and re.fullmatch(r"\d+\.?", current):
             matched = False
             for tail_offset in range(2, 6):
                 if index + tail_offset + 2 >= len(gt1_entities):
@@ -583,9 +586,25 @@ def extract_fitting_rows(dxf_path: Path) -> Iterator[List[str]]:
         index += 1
 
 
-def process_dxf_file(dxf_path: Path) -> tuple[List[List[str]], List[List[str]]]:
-    """Worker function for multiprocessing pool to parse pipe and fitting rows."""
-    return list(extract_pipe_rows(dxf_path)), list(extract_fitting_rows(dxf_path))
+def extract_fitting_rows(dxf_path: Path) -> Iterator[List[str]]:
+    """Extract item rows positioned under FITTINGS section headings."""
+    return extract_section_rows(dxf_path, {"FITTINGS", "FITTING"})
+
+
+def extract_flange_rows(dxf_path: Path) -> Iterator[List[str]]:
+    """Extract item rows positioned under FLANGES section headings."""
+    return extract_section_rows(dxf_path, {"FLANGES", "FLANGE"})
+
+
+def process_dxf_file(
+    dxf_path: Path,
+) -> tuple[List[List[str]], List[List[str]], List[List[str]]]:
+    """Worker function to parse pipe, fitting, and flange rows."""
+    return (
+        list(extract_pipe_rows(dxf_path)),
+        list(extract_fitting_rows(dxf_path)),
+        list(extract_flange_rows(dxf_path)),
+    )
 
 
 def append_to_mto_excel(
@@ -917,6 +936,7 @@ def main() -> None:
     folder = Path.cwd()
     output_path = folder / OUTPUT_FILE
     fittings_output_path = folder / FITTINGS_OUTPUT_FILE
+    flanges_output_path = folder / FLANGES_OUTPUT_FILE
     mto_excel_path = folder / MTO_DIR / MTO_EXCEL_FILE
     dxf_files = sorted(
         path
@@ -925,9 +945,11 @@ def main() -> None:
     )
     row_count = 0
     fitting_row_count = 0
+    flange_row_count = 0
     empty_dxf_files: list[Path] = []
     all_rows: list[list[str]] = []
     all_fitting_rows: list[list[str]] = []
+    all_flange_rows: list[list[str]] = []
 
     import multiprocessing
 
@@ -935,15 +957,20 @@ def main() -> None:
         with (
             output_path.open("w", newline="", encoding="utf-8-sig") as csv_file,
             fittings_output_path.open("w", newline="", encoding="utf-8-sig") as fittings_csv_file,
+            flanges_output_path.open("w", newline="", encoding="utf-8-sig") as flanges_csv_file,
         ):
             writer = csv.writer(csv_file)
             fittings_writer = csv.writer(fittings_csv_file)
+            flanges_writer = csv.writer(flanges_csv_file)
             writer.writerow(CSV_HEADERS)
             fittings_writer.writerow(CSV_HEADERS)
+            flanges_writer.writerow(CSV_HEADERS)
 
             with multiprocessing.Pool() as pool:
                 results = pool.imap(process_dxf_file, dxf_files)
-                for file_number, (rows, fitting_rows) in enumerate(results, start=1):
+                for file_number, (rows, fitting_rows, flange_rows) in enumerate(
+                    results, start=1
+                ):
                     dxf_path = dxf_files[file_number - 1]
                     logging.info(
                         "[%d/%d] Processing %s",
@@ -961,12 +988,19 @@ def main() -> None:
                         fittings_writer.writerow(row)
                         all_fitting_rows.append(row)
                         fitting_row_count += 1
+                    for row in flange_rows:
+                        flanges_writer.writerow(row)
+                        all_flange_rows.append(row)
+                        flange_row_count += 1
                     if rows_from_file == 0:
                         empty_dxf_files.append(dxf_path)
 
         logging.info("Wrote %d pipe rows to %s", row_count, output_path)
         logging.info(
             "Wrote %d fitting rows to %s", fitting_row_count, fittings_output_path
+        )
+        logging.info(
+            "Wrote %d flange rows to %s", flange_row_count, flanges_output_path
         )
         if empty_dxf_files:
             print("\nFiles that did not contribute to the CSV:")
@@ -978,6 +1012,7 @@ def main() -> None:
     # Append to consolidated MTO Excel table (or update formulas / summary row)
     append_to_mto_excel(all_rows, mto_excel_path, "Total", "pipe_bom_export")
     append_to_mto_excel(all_fitting_rows, mto_excel_path, "Fittings", "fitting_bom_export")
+    append_to_mto_excel(all_flange_rows, mto_excel_path, "Flanges", "flange_bom_export")
 
 
 if __name__ == "__main__":
