@@ -552,6 +552,13 @@ def extract_fitting_rows(dxf_path: Path) -> Iterator[List[str]]:
                     description = " ".join(
                         entity.text.strip() for entity in description_entities
                     )
+                    item_number = current.rstrip(".")
+                    description = re.sub(
+                        rf"^{re.escape(item_number)}\s*(?=[A-Za-z])(?![xX]\b)",
+                        "",
+                        description,
+                        count=1,
+                    )
                     clean_description, schedule = split_schedule(description)
                     yield [
                         dwg_name,
