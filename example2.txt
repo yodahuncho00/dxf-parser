@@ -1,0 +1,390 @@
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+412.4139999999999
+ 20
+362.381
+ 30
+0.0
+ 40
+2.5
+  1
+FITTINGS
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+LWPOLYLINE
+  5
+AA
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbPolyline
+ 90
+        2
+ 70
+   128
+ 43
+0.0
+ 10
+426.0139999999999
+ 20
+360.69
+ 10
+412.4139999999999
+ 20
+360.69
+  0
+TEXT
+  5
+AE
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+405.5569999999999
+ 20
+355.578
+ 30
+0.0
+ 40
+2.5
+  1
+  5
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+AF
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+412.4139999999999
+ 20
+355.578
+ 30
+0.0
+ 40
+2.5
+  1
+CAP XH-ST-C27 CAP A420 WPL6-SMLS COATED BE - Sch. 23.83
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B0
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+508.4139999999999
+ 20
+355.578
+ 30
+0.0
+ 40
+2.5
+  1
+80
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B1
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+532.4139999999999
+ 20
+355.578
+ 30
+0.0
+ 40
+2.5
+  1
+I71653638
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B2
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+558.129
+ 20
+355.578
+ 30
+0.0
+ 40
+2.5
+  1
+  1
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B3
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+405.5569999999999
+ 20
+352.177
+ 30
+0.0
+ 40
+2.5
+  1
+  6
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B4
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+412.4139999999999
+ 20
+352.177
+ 30
+0.0
+ 40
+2.5
+  1
+90 LR ELBOW B16.9 A420 WPL6-SMLS BE BE - Sch. STD
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B5
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+508.4139999999999
+ 20
+352.177
+ 30
+0.0
+ 40
+2.5
+  1
+12
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B6
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+532.4139999999999
+ 20
+352.177
+ 30
+0.0
+ 40
+2.5
+  1
+I64954681
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B7
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+558.129
+ 20
+352.177
+ 30
+0.0
+ 40
+2.5
+  1
+  1
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B8
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+405.5569999999999
+ 20
+348.776
+ 30
+0.0
+ 40
+2.5
+  1
+  7
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+B9
+330
+6F
+100
+AcDbEntity
+  8
+GT_1
+100
+AcDbText
+ 10
+412.4139999999999
+ 20
+348.776
+ 30
+0.0
+ 40
+2.5
+  1
+45 LR ELBOW B16.9 A420 WPL6-SMLS BE BE - Sch. STD
+ 41
+1.02
+  7
+HTX1
+100
+AcDbText
+  0
+TEXT
+  5
+BA
+330
+6F
+100

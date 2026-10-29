@@ -13,6 +13,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 INPUT_LAYER = "GT_1"
 OUTPUT_FILE = "pipe_bom_export.csv"
+FITTINGS_OUTPUT_FILE = "fitting_bom_export.csv"
 MTO_DIR = "MTO"
 MTO_EXCEL_FILE = "MTO_Pipes_AG.xlsx"
 PIPE_PREFIX = "PIPE "
@@ -460,13 +461,123 @@ def extract_pipe_rows(dxf_path: Path) -> Iterator[List[str]]:
             index += 1
 
 
-def process_dxf_file(dxf_path: Path) -> List[List[str]]:
-    """Worker function for multiprocessing pool to parse a single DXF file."""
-    return list(extract_pipe_rows(dxf_path))
+def extract_fitting_rows(dxf_path: Path) -> Iterator[List[str]]:
+    """Extract only item rows positioned under a FITTINGS section heading."""
+    all_text_entities: List[TextEntity] = []
+    use_fallback = False
+    try:
+        all_text_entities = extract_modelspace_text_entities(dxf_path)
+        if not all_text_entities:
+            use_fallback = True
+    except Exception as exc:
+        logging.debug(
+            "Fast parser failed on %s: %s. Falling back to ezdxf.", dxf_path.name, exc
+        )
+        use_fallback = True
+
+    if use_fallback:
+        try:
+            document = ezdxf.readfile(dxf_path)
+            all_text_entities = [
+                TextEntity(
+                    entity.dxf.text,
+                    entity.dxf.layer,
+                    getattr(entity.dxf.insert, "x", 0.0),
+                    getattr(entity.dxf.insert, "y", 0.0),
+                )
+                for entity in document.modelspace()
+                if entity.dxftype() == "TEXT"
+            ]
+        except (IOError, OSError, DXFStructureError, ezdxf.DXFError) as exc:
+            logging.warning("Skipping invalid DXF %s: %s", dxf_path.name, exc)
+            return
+
+    date_val, status_val = extract_latest_revision_record(all_text_entities)
+    gt1_entities = [
+        entity for entity in all_text_entities
+        if entity.layer == INPUT_LAYER and entity.text.strip()
+    ]
+    dwg_name = clean_dwg_name(dxf_path.stem)
+    rev_val = extract_rev(dwg_name)
+    area_val = extract_area(dwg_name)
+
+    in_fittings_section = False
+    index = 0
+    while index < len(gt1_entities):
+        current = gt1_entities[index].text.strip()
+        current_upper = current.upper()
+
+        if current_upper in {"FITTINGS", "FITTING"}:
+            in_fittings_section = True
+            index += 1
+            continue
+
+        if in_fittings_section and current_upper in SECTION_HEADERS:
+            in_fittings_section = False
+            index += 1
+            continue
+
+        # A fitting table row is: item number, description, diameter, material code, qty.
+        # The item number anchors parsing so no text outside the FITTINGS block is collected.
+        if in_fittings_section and re.fullmatch(r"\d+\.?", current):
+            matched = False
+            for tail_offset in range(2, 6):
+                if index + tail_offset + 2 >= len(gt1_entities):
+                    break
+
+                diameter_entity = gt1_entities[index + tail_offset]
+                code_entity = gt1_entities[index + tail_offset + 1]
+                quantity_entity = gt1_entities[index + tail_offset + 2]
+                description_entities = gt1_entities[index + 1 : index + tail_offset]
+
+                if any(
+                    entity.text.strip().upper() in SECTION_HEADERS
+                    for entity in description_entities
+                ):
+                    break
+
+                if is_tail_columns(
+                    diameter_entity.text, code_entity.text, quantity_entity.text
+                ):
+                    description = " ".join(
+                        entity.text.strip() for entity in description_entities
+                    )
+                    clean_description, schedule = split_schedule(description)
+                    yield [
+                        dwg_name,
+                        rev_val,
+                        date_val,
+                        status_val,
+                        area_val,
+                        clean_description,
+                        extract_material(clean_description),
+                        diameter_entity.text.strip(),
+                        schedule,
+                        code_entity.text.strip(),
+                        normalize_quantity(quantity_entity.text.strip()),
+                    ]
+                    index += tail_offset + 3
+                    matched = True
+                    break
+
+            if matched:
+                continue
+
+        index += 1
 
 
-def append_to_mto_excel(all_rows: List[List[str]], excel_path: Path) -> None:
-    """Append extracted pipe BOM rows to MTO.xlsx with ISO Base, dynamic Revision Status,
+def process_dxf_file(dxf_path: Path) -> tuple[List[List[str]], List[List[str]]]:
+    """Worker function for multiprocessing pool to parse pipe and fitting rows."""
+    return list(extract_pipe_rows(dxf_path)), list(extract_fitting_rows(dxf_path))
+
+
+def append_to_mto_excel(
+    all_rows: List[List[str]],
+    excel_path: Path,
+    sheet_name: str = "Total",
+    table_name: str = "pipe_bom_export",
+) -> None:
+    """Append extracted BOM rows to a MTO sheet with ISO Base, dynamic Revision Status,
     expanded table range, and filter-aware summary formulas.
     """
     wb: openpyxl.Workbook
@@ -483,11 +594,16 @@ def append_to_mto_excel(all_rows: List[List[str]], excel_path: Path) -> None:
                 excel_path.name,
             )
             return
-        ws = wb["Total"] if "Total" in wb.sheetnames else wb.active
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.create_sheet(sheet_name)
+            for col_idx, header in enumerate(EXCEL_HEADERS, start=2):
+                ws.cell(row=2, column=col_idx, value=header)
     else:
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "Total"
+        ws.title = sheet_name
         # Write headers at row 2 (columns B to N)
         for col_idx, header in enumerate(EXCEL_HEADERS, start=2):
             ws.cell(row=2, column=col_idx, value=header)
@@ -694,10 +810,10 @@ def append_to_mto_excel(all_rows: List[List[str]], excel_path: Path) -> None:
             )
 
         # Update or create clean table (remove any queryTable artifacts)
-        if "pipe_bom_export" in ws.tables:
-            del ws.tables["pipe_bom_export"]
+        if table_name in ws.tables:
+            del ws.tables[table_name]
 
-        tbl = Table(displayName="pipe_bom_export", ref=f"B2:N{new_last_row}")
+        tbl = Table(displayName=table_name, ref=f"B2:N{new_last_row}")
         tbl.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium7",
             showFirstColumn=False,
@@ -783,6 +899,7 @@ def append_to_mto_excel(all_rows: List[List[str]], excel_path: Path) -> None:
 def main() -> None:
     folder = Path.cwd()
     output_path = folder / OUTPUT_FILE
+    fittings_output_path = folder / FITTINGS_OUTPUT_FILE
     mto_excel_path = folder / MTO_DIR / MTO_EXCEL_FILE
     dxf_files = sorted(
         path
@@ -790,19 +907,26 @@ def main() -> None:
         if path.is_file() and path.suffix.lower() == ".dxf"
     )
     row_count = 0
+    fitting_row_count = 0
     empty_dxf_files: list[Path] = []
     all_rows: list[list[str]] = []
+    all_fitting_rows: list[list[str]] = []
 
     import multiprocessing
 
     if dxf_files:
-        with output_path.open("w", newline="", encoding="utf-8-sig") as csv_file:
+        with (
+            output_path.open("w", newline="", encoding="utf-8-sig") as csv_file,
+            fittings_output_path.open("w", newline="", encoding="utf-8-sig") as fittings_csv_file,
+        ):
             writer = csv.writer(csv_file)
+            fittings_writer = csv.writer(fittings_csv_file)
             writer.writerow(CSV_HEADERS)
+            fittings_writer.writerow(CSV_HEADERS)
 
             with multiprocessing.Pool() as pool:
                 results = pool.imap(process_dxf_file, dxf_files)
-                for file_number, rows in enumerate(results, start=1):
+                for file_number, (rows, fitting_rows) in enumerate(results, start=1):
                     dxf_path = dxf_files[file_number - 1]
                     logging.info(
                         "[%d/%d] Processing %s",
@@ -816,10 +940,17 @@ def main() -> None:
                         all_rows.append(row)
                         row_count += 1
                         rows_from_file += 1
+                    for row in fitting_rows:
+                        fittings_writer.writerow(row)
+                        all_fitting_rows.append(row)
+                        fitting_row_count += 1
                     if rows_from_file == 0:
                         empty_dxf_files.append(dxf_path)
 
         logging.info("Wrote %d pipe rows to %s", row_count, output_path)
+        logging.info(
+            "Wrote %d fitting rows to %s", fitting_row_count, fittings_output_path
+        )
         if empty_dxf_files:
             print("\nFiles that did not contribute to the CSV:")
             for path in empty_dxf_files:
@@ -828,7 +959,8 @@ def main() -> None:
         logging.info("No DXF files found to process.")
 
     # Append to consolidated MTO Excel table (or update formulas / summary row)
-    append_to_mto_excel(all_rows, mto_excel_path)
+    append_to_mto_excel(all_rows, mto_excel_path, "Total", "pipe_bom_export")
+    append_to_mto_excel(all_fitting_rows, mto_excel_path, "Fittings", "fitting_bom_export")
 
 
 if __name__ == "__main__":
