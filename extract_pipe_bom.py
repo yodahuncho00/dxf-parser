@@ -112,6 +112,14 @@ def is_diameter(text: str) -> bool:
     return bool(DIAMETER_PATTERN.match(t))
 
 
+def is_fitting_diameter(text: str) -> bool:
+    """Return True if text resembles a fitting size, including a multi-size dimension."""
+    sizes = re.split(r"\s*[xX×]\s*", text.strip())
+    return is_diameter(text) or (
+        len(sizes) > 1 and all(is_diameter(size) for size in sizes)
+    )
+
+
 def is_material_code(text: str) -> bool:
     """Return True if text resembles an alphanumeric item/material code."""
     t = text.strip()
@@ -536,8 +544,10 @@ def extract_fitting_rows(dxf_path: Path) -> Iterator[List[str]]:
                 ):
                     break
 
-                if is_tail_columns(
-                    diameter_entity.text, code_entity.text, quantity_entity.text
+                if (
+                    is_fitting_diameter(diameter_entity.text)
+                    and is_material_code(code_entity.text)
+                    and is_quantity(quantity_entity.text)
                 ):
                     description = " ".join(
                         entity.text.strip() for entity in description_entities
